@@ -35,24 +35,7 @@ export class KafkaConsumer {
     });
   }
 
-  private async validateMessage(message: any): Promise<boolean> {
-    if (!message.value) {
-      this.logger.error('Received message with null or undefined value');
-      return false;
-    }
 
-    try {
-      const event = JSON.parse(message.value.toString());
-      if (!event.image || !event.userId || !event.photoId) {
-        this.logger.error('Invalid message format: missing required fields');
-        return false;
-      }
-      return true;
-    } catch (error) {
-      this.logger.error('Failed to parse message:', error);
-      return false;
-    }
-  }
 
   private async processMessage(message: any, retryCount = 0): Promise<void> {
       const event = message;

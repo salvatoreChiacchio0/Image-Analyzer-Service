@@ -4,8 +4,9 @@ import { Neo4jService } from '../neo4j/neo4j.service';
 
 interface UserInteractionEvent {
   userId: string;
+  postId: string;
   tag: string[];
-  interactionType: 'LIKE' | 'COMMENT' | 'HIDE' | 'DISLIKE';
+  interactionType: 'LIKE' | 'COMMENT' | 'DISLIKE' | 'HIDE' | 'POST';
   timestamp: number;
 }
 
@@ -20,7 +21,8 @@ export class UserInteractionConsumer {
     LIKE: 0.5,
     COMMENT: 1.0,
     HIDE: -1.0,
-    POST:2.0,
+    DISLIKE: -0.5,
+    POST: 2.0,
   };
 
   constructor(private readonly neo4jService: Neo4jService) {
@@ -30,11 +32,11 @@ export class UserInteractionConsumer {
       logLevel: logLevel.ERROR,
       retry: {
         initialRetryTime: 100,
-        retries: 8
+        retries: 8,
       } as RetryOptions,
     });
 
-    this.consumer = this.kafka.consumer({ 
+    this.consumer = this.kafka.consumer({
       groupId: 'user-interaction-group',
       maxWaitTimeInMs: 5000,
       sessionTimeout: 30000,
@@ -64,67 +66,70 @@ export class UserInteractionConsumer {
     try {
       const event = JSON.parse(message.value.toString()) as UserInteractionEvent;
       this.logger.log(`Processing ${event.interactionType} event for user ${event.userId}`);
-  
+
       const weightChange = this.WEIGHT_CHANGES[event.interactionType];
       this.logger.log(`Weight change for ${event.interactionType}: ${weightChange}`);
-      event.tag.forEach(( element) => {
-         this.neo4jService.updateInterestWeight(event.userId, element, weightChange);
-      });
-      this.logger.log(`Updated interest weight for user ${event.userId} and tag ${event.tag}`);
+
+      for (const tag of event.tag) {
+        await this.neo4jService.updateInterestWeight(event.userId, tag, weightChange);
+      }
+
+      this.logger.log(`Updated interest weights for user ${event.userId}`);
+
+      // Interazione User → Post
+      await this.neo4jService.createUserPostInteraction(
+        event.userId,
+        event.postId,
+        event.interactionType,
+        weightChange
+      );
+
       const eventAge = Date.now() - event.timestamp;
-      if (eventAge > 60 * 1000) { // decadimento ogni minuto
+      if (eventAge > 60 * 1000) {
         const decayFactor = Math.pow(0.95, Math.floor(eventAge / (60 * 1000)));
         await this.neo4jService.applyTimeDecay(event.userId, decayFactor);
       }
-  
-      await this.neo4jService.normalizeInterestVector(event.userId); // normalizzazione
-  
+
+      await this.neo4jService.normalizeInterestVector(event.userId);
+
       this.logger.log('Interaction processed and Neo4j updated');
     } catch (error) {
       try {
         const event = JSON.parse(message.value.toString()) as UserInteractionEvent;
-        this.logger.error('User Interaction event ' + event.interactionType + ' failed - ', error);
+        this.logger.error(`User Interaction event ${event.interactionType} failed`, error);
       } catch {
         this.logger.error('Failed to parse message value', error);
       }
     }
   }
 
- 
-    
-
   async start() {
-    
-      try {
-        await this.consumer.connect();
-        
-        await this.consumer.subscribe({ 
-          topic: 'user-interaction-topic', 
-          fromBeginning: false 
-        });
-        this.logger.log('✅ Successfully subscribed to Kafka - User Interaction Consumer');
+    try {
+      await this.consumer.connect();
+      await this.consumer.subscribe({
+        topic: 'user-interaction-topic',
+        fromBeginning: false,
+      });
 
-        await this.consumer.run({
-          eachMessage: async ({ topic, partition, message }) => {
-            this.logger.log(`📥 Received new user interaction event from topic ${topic}`);
-            
-            if (!await this.validateMessage(message)) {
-              this.logger.error('❌ Invalid message format received');
-              return;
-            }
+      this.logger.log('✅ Successfully subscribed to Kafka - User Interaction Consumer');
 
-            await this.onUserLike(message);
-          },
-        });
+      await this.consumer.run({
+        eachMessage: async ({ topic, partition, message }) => {
+          this.logger.log(`📥 Received new user interaction event from topic ${topic}`);
 
-        this.logger.log('✅ Kafka consumer started and listening for user interaction events');
-        return;
-      } catch (error) {
-        this.logger.error(`❌ Failed to connect to Kafka: ${error.message}`);
+          if (!(await this.validateMessage(message))) {
+            this.logger.error('❌ Invalid message format received');
+            return;
+          }
 
-        
-        await new Promise(resolve => setTimeout(resolve, this.CONNECTION_RETRY_DELAY));
-      }
+          await this.onUserLike(message);
+        },
+      });
+
+      this.logger.log('✅ Kafka consumer started and listening for user interaction events');
+    } catch (error) {
+      this.logger.error(`❌ Failed to connect to Kafka: ${error.message}`);
+      await new Promise((resolve) => setTimeout(resolve, this.CONNECTION_RETRY_DELAY));
+    }
   }
-
-} 
+}
