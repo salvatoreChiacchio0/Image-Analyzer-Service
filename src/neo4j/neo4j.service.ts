@@ -66,23 +66,26 @@ export class Neo4jService {
     }
   }
 
-  async createPostTags(postId: string, tags: string[]): Promise<void> {
-    const session: Session = this.driver.session();
-    try {
-      for (const tag of tags) {
-        await session.run(
-          `
-          MERGE (p:Post {id: $postId})
-          MERGE (t:Tag {name: $tag})
-          MERGE (p)-[:HAS_TAG]->(t)
-          `,
-          { postId, tag },
-        );
-      }
-    } finally {
-      await session.close();
-    }
+  async createPostAndLinkToUserAndTags(userId: string, postId: string, tags: string[]): Promise<void> {
+  const session = this.driver.session();
+  try {
+    await session.run(
+      `
+      MATCH (u:User {id: $userId})
+      MERGE (p:Post {id: $postId})
+      MERGE (u)-[:CREATED]->(p)
+      WITH p
+      UNWIND $tags AS tag
+      MERGE (t:Tag {name: tag})
+      MERGE (p)-[:HAS_TAG]->(t)
+      `,
+      { userId, postId, tags }
+    );
+  } finally {
+    await session.close();
   }
+}
+
 
   async applyTimeDecay(
     userId: string,
@@ -195,4 +198,24 @@ export class Neo4jService {
       await session.close();
     }
   }
+
+  async updateInterestGraph(userId: string, tags: string[], weightChange: number): Promise<void> {
+  const session = this.driver.session();
+  try {
+    await session.run(
+      `
+      MATCH (u:User {id: $userId})
+      UNWIND $tags AS tag
+      MERGE (t:Tag {name: tag})
+      MERGE (u)-[r:INTERESTED_IN]->(t)
+      ON CREATE SET r.weight = $weightChange, r.lastUpdated = datetime()
+      ON MATCH SET r.weight = r.weight + $weightChange, r.lastUpdated = datetime()
+      `,
+      { userId, tags, weightChange }
+    );
+  } finally {
+    await session.close();
+  }
+}
+
 }

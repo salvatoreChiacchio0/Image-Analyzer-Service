@@ -6,8 +6,8 @@ import { MongoDBService } from '../mongodb/mongodb.service';
 import { AnalyzeResultDto } from '../vision/dto/analyze-result.dto';
 
 @Injectable()
-export class KafkaConsumer {
-  private readonly logger = new Logger(KafkaConsumer.name);
+export class PostUploadConsumer {
+  private readonly logger = new Logger(PostUploadConsumer.name);
   private readonly kafka: Kafka;
   private readonly consumer;
   private readonly CONNECTION_RETRIES = 10;
@@ -45,15 +45,16 @@ export class KafkaConsumer {
       const base64Data = event.imageUrl.replace(/^data:image\/\w+;base64,/, '');
       const buffer = Buffer.from(base64Data, 'base64');
       this.logger.log(`Buffer size: ${buffer.length} bytes, before processing`);
-      //const result: AnalyzeResultDto = await this.visionService.analyzeImage(buffer);
-      const result =  {
+      const result: AnalyzeResultDto = await this.visionService.analyzeImage(buffer);
+      /*const result =  {
         labels: ['nature', 'landscape', 'sunset','mountains'], // Mocked result for testing
-      }
+      }*/
       this.logger.log(`Keyword retrieved from post: ${JSON.stringify(result.labels)}`);
       // Update both Neo4j and MongoDB
       await Promise.all([
-        this.neo4jService.updateInterestGraph(event.userId, result.labels,2.0), // è un post quindi interesse è 2.0
-        this.mongoDBService.updatePostMetadata(event.photoId, result.labels)
+        this.neo4jService.updateInterestGraph(event.userId, result.labels, 2.0),
+        this.mongoDBService.updatePostMetadata(event.photoId, result.labels),
+        this.neo4jService.createPostAndLinkToUserAndTags(event.userId, event.photoId, result.labels),
       ]);
 
       this.logger.log('Analysis complete and databases updated');

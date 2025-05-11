@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { KafkaConsumer } from '../src/kafka/kafka.consumer';
+import { KafkaConsumer } from '../src/kafka/post-upload.consumer';
 import { VisionService } from '../src/vision/vision.service';
 import { GcsService } from '../src/gcs/gcs.service';
 import { Neo4jService } from '../src/neo4j/neo4j.service';
